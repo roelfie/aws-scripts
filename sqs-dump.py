@@ -79,15 +79,19 @@ def create_target_folder(queue_url):
   return target_folder
 
 
+def increment(i):
+    sys.stdout.write('.')
+    sys.stdout.flush()
+    return i+1
+
+
 def download_queue(queue_url, target_folder):
   print("Start downloading \nfrom queue {}".format(queue_url))
   i=0
   message=receive_message(queue_url)
   while (i < MAX_RECEIVES) and (message != None):
     save_message(message, target_folder)
-    sys.stdout.write('.')
-    sys.stdout.flush()
-    i+=1
+    i=increment(i)
     message=receive_message(queue_url)
   print("\nFinished downloading {} messages \nto folder {}".format(i, target_folder))
 

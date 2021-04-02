@@ -13,21 +13,21 @@
 # For queues with a default visibility timeout (30s) and limited number of available messages (<200?) 
 # this script will, under normal circumstances, receive each message once and then stop polling.
 # 
-import os
-import sys
 import boto3
 import json
+import os
+import sys
 from datetime import datetime
 
 sqs = boto3.client('sqs')
 
 MAX_RECEIVES=60
-QUEUE_URL=''
+DATETIME_STRING_FORMAT="%Y%m%d_%H%M%S"
 
 
-def receive_message():
-  response = sqs.receive_message(
-    QueueUrl=QUEUE_URL,
+def receive_message(queue_url):
+  response=sqs.receive_message(
+    QueueUrl=queue_url,
     AttributeNames=['All'],
     MessageAttributeNames=['All'],
     MaxNumberOfMessages=1,
@@ -35,10 +35,7 @@ def receive_message():
     WaitTimeSeconds=1
   )
   try:
-    messages = response["Messages"]
-    if len(messages) == 0:
-      return None
-    return messages[0]
+    return response["Messages"][0]
   except:
     return None
 
@@ -49,46 +46,59 @@ def write_to_file(filename, data):
   file.close()
 
 
+def to_datetime_string(ts_in_ms):
+  ts_in_seconds=ts_in_ms/1000
+  return datetime.fromtimestamp(ts_in_seconds).strftime(DATETIME_STRING_FORMAT)
+
+
+def determine_base_filename(message):
+  message_id=message["MessageId"]
+  sent_timestamp=message["Attributes"]["SentTimestamp"]
+  sent_datetime=to_datetime_string(int(sent_timestamp))
+  return sent_datetime + "_" + message_id
+
+
 def save_message(message, folder):
-  message_id = message["MessageId"]
-  sent_timestamp = message["Attributes"]["SentTimestamp"]
-  sent_datetime = datetime.fromtimestamp(int(sent_timestamp)/1000).strftime("%Y%m%d_%H%M%S")
-  body = message["Body"]
+  body=message["Body"]
+  payload=json.dumps(json.loads(json.loads(body)["Message"]), indent=2)
 
-  cwd = os.getcwd()
-  base_filename = sent_datetime + "_" + message_id
+  filename=determine_base_filename(message)
+  filename_message=os.path.join(os.getcwd(), folder, "messages", filename) + ".message.json"
+  filename_payload=os.path.join(os.getcwd(), folder, "payloads", filename) + ".payload.json"
 
-  write_to_file(os.path.join(cwd, folder, base_filename) + ".json", 
-                body
-  )
+  write_to_file(filename_message, body)
+  write_to_file(filename_payload, payload)
 
-  body_message = json.dumps(json.loads(json.loads(body)["Message"]), indent=2)
-  write_to_file(os.path.join(cwd, folder, "msg", base_filename) + ".msg.json", 
-                body_message
-  )
+
+def create_target_folder(queue_url):
+  queue_name=queue_url.rsplit('/', 1)[1]
+  target_folder=datetime.now().strftime(DATETIME_STRING_FORMAT) + "_" + queue_name
+  os.mkdir(target_folder)
+  os.mkdir(os.path.join(target_folder, "messages"))
+  os.mkdir(os.path.join(target_folder, "payloads"))
+  return target_folder
+
+
+def download_queue(queue_url, target_folder):
+  print("Start downloading \nfrom queue {}".format(queue_url))
+  i=0
+  message=receive_message(queue_url)
+  while (i < MAX_RECEIVES) and (message != None):
+    save_message(message, target_folder)
+    sys.stdout.write('.')
+    sys.stdout.flush()
+    i+=1
+    message=receive_message(queue_url)
+  print("\nFinished downloading {} messages \nto folder {}".format(i, target_folder))
 
 
 def main():
   if len(sys.argv) != 2:
     raise Exception("Missing argument (the queue URL)")
 
-  global QUEUE_URL
-  QUEUE_URL = sys.argv[1]
-  print(QUEUE_URL)
-  queue_name=QUEUE_URL.rsplit('/', 1)[1]
-
-  target_folder = datetime.now().strftime("%Y%m%d_%H%M%S_") + queue_name
-  os.mkdir(target_folder)
-  os.mkdir(os.path.join(target_folder, "msg"))
-
-  i = 0
-  while True:
-    i = i+1
-    print("Receiving message ", i)
-    message = receive_message()
-    if (i > MAX_RECEIVES) or (message == None):
-      break
-    save_message(message, target_folder)
+  queue_url=sys.argv[1]
+  target_folder=create_target_folder(queue_url)
+  download_queue(queue_url, target_folder)
 
 
 if  __name__ == "__main__":

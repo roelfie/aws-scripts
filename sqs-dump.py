@@ -17,11 +17,12 @@ import boto3
 import json
 import os
 import sys
+import time
 from datetime import datetime
 
 sqs = boto3.client('sqs')
 
-MAX_RECEIVES=60
+MAX_RECEIVES=100
 DATETIME_STRING_FORMAT="%Y%m%d_%H%M%S"
 
 
@@ -70,9 +71,13 @@ def save_message(message, folder):
   write_to_file(filename_payload, payload)
 
 
+def queue_name(queue_url):
+  return queue_url.rsplit('/', 1)[1]
+
+
 def create_target_folder(queue_url):
-  queue_name=queue_url.rsplit('/', 1)[1]
-  target_folder=datetime.now().strftime(DATETIME_STRING_FORMAT) + "_" + queue_name
+  q_name=queue_name(queue_url).replace("dead-letter-queue","dlq")
+  target_folder=datetime.now().strftime(DATETIME_STRING_FORMAT) + "_" + q_name
   os.mkdir(target_folder)
   os.mkdir(os.path.join(target_folder, "messages"))
   os.mkdir(os.path.join(target_folder, "payloads"))
@@ -86,23 +91,25 @@ def increment(i):
 
 
 def download_queue(queue_url, target_folder):
-  print("Start downloading \nfrom queue {}".format(queue_url))
   i=0
   message=receive_message(queue_url)
   while (i < MAX_RECEIVES) and (message != None):
     save_message(message, target_folder)
     i=increment(i)
     message=receive_message(queue_url)
-  print("\nFinished downloading {} messages \nto folder {}".format(i, target_folder))
-
+  return i
 
 def main():
   if len(sys.argv) != 2:
     raise Exception("Missing argument (the queue URL)")
-
   queue_url=sys.argv[1]
+
+  print("")
+  print(queue_name(queue_url))
+  start=time.time()
   target_folder=create_target_folder(queue_url)
-  download_queue(queue_url, target_folder)
+  nr_messages=download_queue(queue_url, target_folder)
+  print("\nDownloaded {} messages in {} seconds".format(nr_messages, round(time.time()-start,1)))
 
 
 if  __name__ == "__main__":
